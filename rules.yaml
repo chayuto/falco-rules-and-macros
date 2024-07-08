@@ -211,3 +211,43 @@
   output: >
     Command injection attempt
     (user=%user.name command=%proc.cmdline container=%container.id)
+
+# Launch Ingress Remote File Copy Tools in Container
+# Source: comminuty slack - Chris Waltrip
+- macro: sonarqube_healthcheck_activities
+  condition: (user.name = sonarqube) and
+            (container.name = sonarqube) and 
+            (k8s.ns.name = sonarqube) and 
+            (container.image.repository = docker.io/library/sonarqube) and 
+            (
+                (proc.cmdline contains ":9000/api/system/liveness") or 
+                (proc.cmdline contains ":9000/api/system/status")
+            )
+
+- macro: user_known_ingress_remote_file_copy_activities
+  condition: opencti_healthcheck_activities or  
+            sonarqube_healthcheck_activities
+  override:
+
+- macro: opencti_healthcheck_activities
+  condition: (container.name = elasticsearch) and
+              (k8s.ns.name = opencti) and 
+              (proc.pname = healthcheck.sh) and 
+              (container.image.repository = docker.io/bitnami/elasticsearch) and
+              (proc.cmdline contains "opencti.svc.cluster.local:")
+  tags: [maturity_incubating, container, network, process, mitre_command_and_control, TA0011]
+  condition: replace
+
+
+- rule: Launch Ingress Remote File Copy Tools in Container
+  desc: > 
+    Detect ingress remote file copy tools (such as curl or wget) launched inside containers. This rule can be 
+    considered a valuable auditing tool, but it has the potential to generate notable noise and requires careful 
+    profiling before full operationalization.
+  condition: >
+    spawned_process 
+    and container 
+    and (ingress_remote_file_copy_procs or curl_download) 
+    and not user_known_ingress_remote_file_copy_activities
+  output: Ingress remote file copy tool launched in container (evt_type=%evt.type user=%user.name user_uid=%user.uid user_loginuid=%user.loginuid process=%proc.name proc_exepath=%proc.exepath parent=%proc.pname command=%proc.cmdline terminal=%proc.tty exe_flags=%evt.arg.flags %container.info)
+  priority: NOTICE
