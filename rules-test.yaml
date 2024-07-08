@@ -1,0 +1,8 @@
+- rule: THIS IS TEST RULE
+  desc: > 
+    JUST TRIGGER ALREADY
+  condition: >
+    evt.type=execve
+  output: TEST RULE (evt_type=%evt.type %proc.name)
+  priority: NOTICE
+  tags: [TEST RULE]

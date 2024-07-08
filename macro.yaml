@@ -1,0 +1,20 @@
+- macro: compiler_or_interpreter_usage
+  condition: (proc.name in (gcc, g++, python, perl, ruby, javac))
+
+- macro: network_sniffing_tool
+  condition: (proc.name in (tcpdump, wireshark, tshark))
+
+- macro: privilege_escalation_attempt
+  condition: (proc.name=sudo or fd.name=/etc/sudoers)
+
+# untested
+- macro: high_cpu_usage
+  condition: (proc.cpu>80)
+
+# untested
+- macro: sudo_command
+  condition: (proc.name=sudo and evt.type=execve)
+
+# Override, handle (-Lo)
+- macro: curl_download
+  condition: proc.name = curl and open_write

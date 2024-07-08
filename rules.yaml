@@ -1,0 +1,213 @@
+
+
+
+# Source: https://sysdig.com/blog/cve-2021-33909-sequoia-falco-linux-filesystem/
+# untested, missing macros
+- rule: Write below binary dir
+  desc: an attempt to write to any file below a set of binary directories
+  condition: >
+    bin_dir and evt.dir = < and open_write
+    and not package_mgmt_procs
+    and not exe_running_docker_save
+    and not python_running_get_pip
+    and not python_running_ms_oms
+    and not user_known_write_below_binary_dir_activities
+  output: >
+    File below a known binary directory opened for writing
+(user=%user.name user_loginuid=%user.loginuid
+    command=%proc.cmdline file=%fd.name parent=%proc.pname pcmdline=%proc.pcmdline gparent=%proc.aname[2] container_id=%container.id image=%container.image.repository)
+  priority: ERROR
+  tags: [filesystem, mitre_persistence]
+
+
+# untested, missing macros
+- rule: Write below root
+  desc: an attempt to write to any file directly below / or /root
+  condition: >
+    root_dir and evt.dir = < and open_write
+    and proc_name_exists
+    and not fd.name in (known_root_files)
+    and not fd.directory pmatch (known_root_directories)
+    and not exe_running_docker_save
+    and not gugent_writing_guestagent_log
+    and not dse_writing_tmp
+    and not zap_writing_state
+    and not airflow_writing_state
+    and not rpm_writing_root_rpmdb
+    and not maven_writing_groovy
+    and not chef_writing_conf
+    and not kubectl_writing_state
+    and not cassandra_writing_state
+    and not galley_writing_state
+    and not calico_writing_state
+    and not rancher_writing_root
+    and not runc_writing_exec_fifo
+    and not mysqlsh_writing_state
+    and not known_root_conditions
+    and not user_known_write_root_conditions
+    and not user_known_write_below_root_activities
+  output: "File below / or /root opened for writing (user=%user.name user_loginuid=%user.loginuid command=%proc.cmdline parent=%proc.pname file=%fd.name program=%proc.name container_id=%container.id image=%container.image.repository)"
+  priority: ERROR
+  tags: [filesystem, mitre_persistence]
+
+
+# Source: https://sysdig.com/blog/cve-2021-3156-sudo-falco/
+
+- rule: Sudo Potential Privilege Escalation (CVE-2021-3156)
+  desc: Privilege escalation vulnerability affected sudo. Executing sudo using sudoedit -s or sudoedit -t command from an unprivileged user it's possible to elevate the user privileges to root.
+  condition: spawned_process and user.uid!= 0 and proc.name=sudoedit and (proc.args contains -s or proc.args contains -i) and (proc.args contains "\ " or proc.args endswith \)
+  output: "Detect Sudo Privilege Escalation Exploit (CVE-2021-3156)  (user=%user.name  %container.info parent=%proc.pname cmdline=%proc.cmdline)"
+  priority: CRITICAL
+  tags: [filesystem, mitre_privilege_escalation]
+
+
+
+# Source: https://sysdig.com/blog/how-to-detect-kubernetes-vulnerability-cve-2019-11246-using-falco/
+- rule: Write below monitored dir
+  desc: an attempt to write to any file below a set of binary directories
+  condition: >
+    evt.dir = < and open_write and monitored_dir
+    and not package_mgmt_procs
+    and not coreos_write_ssh_dir
+    and not exe_running_docker_save
+    and not python_running_get_pip
+    and not python_running_ms_oms
+    and not google_accounts_daemon_writing_ssh
+    and not cloud_init_writing_ssh
+    and not user_known_write_monitored_dir_conditions
+  output: >
+    File below a monitored directory opened for writing (user=%user.name
+    command=%proc.cmdline file=%fd.name parent=%proc.pname pcmdline=%proc.pcmdline gparent=%proc.aname[2] container_id=%container.id image=%container.image.repository)
+  priority: ERROR
+  tags: [filesystem, mitre_persistence]
+
+- macro: safe_kubectl_version
+  condition: (jevt.value[/userAgent] startswith "kubectl/v1.15" or
+              jevt.value[/userAgent] startswith "kubectl/v1.14.3" or
+              jevt.value[/userAgent] startswith "kubectl/v1.14.2" or
+              jevt.value[/userAgent] startswith "kubectl/v1.13.7" or
+              jevt.value[/userAgent] startswith "kubectl/v1.13.6" or
+              jevt.value[/userAgent] startswith "kubectl/v1.12.9")
+
+# CVE-2019-1002101
+# Run kubectl version --client and if it does not say client version 1.12.9, 1.13.6, or 1.14.2 or newer,  you are running a vulnerable version.
+- rule: K8s Vulnerable Kubectl Copy
+  desc: Detect any attempt vulnerable kubectl copy in pod
+  condition: kevt_started and pod_subresource and kcreate and
+             ka.target.subresource = "exec" and ka.uri.param[command] = "tar" and
+             not safe_kubectl_version
+  output: Vulnerable kubectl copy detected (user=%ka.user.name pod=%ka.target.name ns=%ka.target.namespace action=%ka.target.subresource command=%ka.uri.param[command] userAgent=%jevt.value[/userAgent])
+  priority: WARNING
+  source: k8s_audit
+  tags: [k8s]
+
+# SIP example https://falco.org/docs/rules/fd-sip-name/
+- rule: Connect to Yahoo
+  desc: Detect Connects to yahoo.com IPs
+  condition: evt.type=connect and fd.sip.name=yahoo.com
+  output: Some connect to yahoo (command=%proc.cmdline connection=%fd.name IP=%fd.sip.name)
+  priority: INFO
+
+- rule: Connect to Anything but Yahoo
+  desc: Detect Connects to anything other than yahoo.com IPs
+  condition: evt.type=connect and fd.sip.name!=yahoo.com
+  output: Some connect to something other than yahoo (command=%proc.cmdline connection=%fd.name IP=%fd.sip.name)
+  priority: INFO
+
+
+# To get the length of messages sent through the network
+# Source: comminuty slack
+# untested
+- macro: container
+  condition: container.id != host
+
+- macro: container_send
+  condition: >
+    ((evt.type in (send,sendto, sendmsg,sendmmsg) and evt.dir=>) and (fd.typechar = 4 or fd.typechar = 6) and container)
+
+- rule: privileged_container_send
+  desc: Privileged containers should be monitored for any network traffic
+  condition: >
+    container.privileged=true and container_send and evt.arg.size > 1000
+  output: >
+    Privileged container has sent packets 
+    (evt_type=%evt.type container_id=%container.id container_name=%container.name container_type=%container.type container_image=%container.image 
+     container_image_repository=%container.image.repository container_image_tag=%container.image.tag 
+     container_ip=%container.ip container_all_ips=%container.cni.json k8s_namespace=%k8s.ns.name k8s_pod_anem=%k8s.pod.name
+     k8s_pod_labels=%k8s.pod.labels full_fd=%fd.name client_ip=%fd.cip server_ip=%fd.sip buff_len=%evt.buflen buffer=%evt.buffer
+     client_port=%fd.cport server_port=%fd.sport protocol=%fd.l4proto evt_type=%evt.type user=%user.name user_uid=%user.uid 
+     user_loginuid=%user.loginuid process=%proc.name proc_exepath=%proc.exepath parent=%proc.pname
+     command=%proc.cmdline terminal=%proc.tty)
+
+
+# Source: comminuty slack
+# untested
+- rule: create_files_below_etc
+  desc: creating any files below /etc other than known programs that manage devices.
+  condition: (evt.type = creat or ( open_write and evt.arg.flags contains O_CREAT)) and proc.name != blkid and fd.directory = /host/etc
+  output: "File created below /etc (user=%user.name command=%proc.cmdline file=%fd.name)"
+  priority: WARNING
+
+
+# Source: comminuty slack
+# NOT WORKING, Falco alerts, which has missing values for some  process related attributes. These values are marked as "<NA>
+- rule: BPF Program Executed
+  desc: Identify users space programs currently running (e)BPF.
+  enabled: true
+  condition: >
+    evt.type = bpf
+    and evt.dir=> 
+    and evt.arg.cmd=5
+  output: |
+    # Event information
+    evt_rawres=%evt.rawres, evt_type=%evt.type, evt_dir=%evt.dir, syscall_type=%syscall.type, evt_category=%evt.category, evt_args=%evt.args, 
+    # Process information
+    proc_pid=%proc.pid, proc_exe=%proc.exe, proc_name=%proc.name, proc_args=%proc.args, proc_cmdline=%proc.cmdline, proc_exeline=%proc.exeline, proc_cwd=%proc.cwd, proc_nthreads=%proc.nthreads, proc_nchilds=%proc.nchilds, proc_ppid=%proc.ppid, proc_pname=%proc.pname, proc_pcmdline=%proc.pcmdline, proc_apid_2=%proc.apid[2], proc_aname_2=%proc.aname[2], proc_apid_3=%proc.apid[3], proc_aname_3=%proc.aname[3], proc_apid_4=%proc.apid[4], proc_aname_4=%proc.aname[4], proc_loginshellid=%proc.loginshellid, proc_duration=%proc.duration, proc_fdopencount=%proc.fdopencount, proc_vmsize=%proc.vmsize, proc_sid=%proc.sid, proc_sname=%proc.sname, proc_tty=%proc.tty, proc_exepath=%proc.exepath, proc_vpgid=%proc.vpgid, proc_is_exe_writable=%proc.is_exe_writable,
+    # Threat information
+    #thread_cap_permitted=%thread.cap_permitted, thread_cap_inheritable=%thread.cap_inheritable, thread_cap_effective=%thread.cap_effective,
+    # File descriptor information
+    fd_num=%fd.num, fd.type=%fd.type, fd_name=%fd.name, 
+    # User and group information
+    user_uid=%user.uid, user_name=%user.name, user_homedir=%user.homedir, user_shell=%user.shell, user_loginuid=%user.loginuid, user_loginname=%user.loginname, group_gid=%group.gid, group_name=%group.name
+    # Container information
+    container_id=%container.id, container_name=%container.name, container_image=%container.image, container_image=%container.image.id, container_type=%container.type, container_privileged=%container.privileged, container_mounts=%container.mounts, container_image_repository=%container.image.repository, container_image_tag=%container.image.tag, container_image_digest=%container.image.digest
+  priority: WARNING
+
+
+# Source: comminuty slack
+- list: shell_binaries
+  items: [bash, sh, zsh, ksh, csh, tcsh, ash, dash]
+
+- macro: shell_procs
+  condition: proc.name in (shell_binaries)
+
+- macro: command_injection_attempt
+  condition: >
+    proc.cmdline contains "|" or
+    proc.cmdline contains ";" or
+    proc.cmdline contains "&" or
+    proc.cmdline contains "$" or
+    proc.cmdline contains "<" or
+    proc.cmdline contains ">" or
+    proc.cmdline contains "`" or
+    proc.cmdline contains "(" or
+    proc.cmdline contains ")" or
+    proc.cmdline contains "{" or
+    proc.cmdline contains "}" or
+    proc.cmdline contains "," or
+    proc.cmdline contains " " or
+    proc.cmdline contains "'" or
+    proc.cmdline contains "\"" or
+    proc.cmdline contains "/dev/" or
+    proc.cmdline contains "/proc/" or
+    proc.cmdline contains "/sys/"
+
+- rule: Command Injection Attack Detection
+  desc: Detects potential command injection attempts
+  condition: >
+    spawned_process
+    and (command_injection_attempt)
+    and shell_procs
+  output: >
+    Command injection attempt
+    (user=%user.name command=%proc.cmdline container=%container.id)
